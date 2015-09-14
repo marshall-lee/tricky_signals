@@ -3,6 +3,8 @@ tricky_signals
 
 [![Build Status](https://travis-ci.org/marshall-lee/tricky_signals.svg)](https://travis-ci.org/marshall-lee/tricky_signals)
 
+![](https://pbs.twimg.com/media/CO4aDLlUAAAjMuA.png)
+
 This gem aims to solve the problem with...
 
 ```ruby
