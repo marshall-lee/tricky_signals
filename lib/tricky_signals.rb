@@ -1,4 +1,5 @@
 require 'thread'
+require 'monitor.rb'
 
 class TrickySignals
   class Handlers
@@ -172,9 +173,21 @@ class TrickySignals
     Signal.trap(signal, command)
   end
 
+  if Signal.respond_to? :signame
+    def signame(signal)
+      Signal.signame(signal).to_s
+    end
+  else
+    def signame(signal)
+      found = Signal.list.find { |name, i| i == signal }
+      fail ArgumentError, "unknow signal #{signal}" unless found
+      found.first.to_s
+    end
+  end
+
   def stringify_signal(signal)
     if signal.is_a? Fixnum
-      Signal.signame(signal)
+      signame(signal)
     else
       signal.to_s
     end
