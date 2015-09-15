@@ -5,7 +5,7 @@ describe TrickySignals do
 
   def wait_signals!
     # TODO: how to do it smarter?
-    sleep 0.001
+    sleep 0.005
   end
 
   shared_context 'previously defined USR1' do
