@@ -2,9 +2,6 @@ require 'thread'
 require 'monitor.rb'
 
 class TrickySignals
-  class Handlers
-  end
-
   class << self
     def start!
       obj = new.start!
@@ -14,10 +11,6 @@ class TrickySignals
       else
         obj
       end
-    end
-
-    def handlers_class
-      const_get(:Handlers)
     end
   end
 
@@ -33,7 +26,7 @@ class TrickySignals
       fail "cannot start #{self}: already started!" if @started
       @started = true
 
-      @handlers = self.class.handlers_class.new
+      @handlers = {}
       @previous = {}
       @io_thread = start_io
       self
@@ -57,22 +50,6 @@ class TrickySignals
 
   def started?
     @started
-  end
-
-  def handlers
-    synchronize do
-      check_started!
-      @handlers
-    end
-  end
-
-  def setup_handlers
-    fail 'you should pass a block to `setup_handlers`' unless block_given?
-
-    synchronize do
-      check_started!
-      @handlers.instance_eval(&proc)
-    end
   end
 
   def trap(signal, command = nil)
@@ -137,11 +114,13 @@ class TrickySignals
         signal = input.chomp
 
         synchronize do
-          handler = @handlers.public_method("handle_#{signal}")
-          case handler.arity
-          when 0 then handler.call
-          when 1 then handler.call signal
-          when 2 then handler.call signal, @previous[signal]
+          handler = @handlers[signal]
+          if handler
+            case handler.arity
+            when 0 then handler.call
+            when 1 then handler.call signal
+            when 2 then handler.call signal, @previous[signal]
+            end
           end
         end
       end
@@ -159,17 +138,14 @@ class TrickySignals
   end
 
   def trap_with_block(signal, &block)
-    @handlers.define_singleton_method("handle_#{signal}", &block)
+    @handlers[signal] = block
     Signal.trap(signal) do
       @io_write.puts(signal)
     end
   end
 
   def trap_with_command(signal, command)
-    sclass = @handlers.singleton_class
-    if sclass.method_defined?(method_name_for(signal))
-      sclass.send(:remove_method, method_name_for(signal))
-    end
+    @handlers.delete signal
     Signal.trap(signal, command)
   end
 
@@ -191,10 +167,6 @@ class TrickySignals
     else
       signal.to_s
     end
-  end
-
-  def method_name_for(signal)
-    "handle_#{signal}"
   end
 end
 

@@ -3,6 +3,14 @@ require 'spec_helper'
 describe TrickySignals do
   let(:pid) { Process.pid }
 
+  def handlers
+    subject.instance_variable_get :@handlers
+  end
+
+  def send_usr1!
+    Process.kill 'USR1', pid
+  end
+
   def wait_signals!
     # TODO: how to do it smarter?
     sleep 0.005
@@ -33,92 +41,87 @@ describe TrickySignals do
   end
 
   shared_examples '#trap behavior' do
+    before { @buffer = [] }
     after { subject.untrap('USR1') }
 
     it 'traps system signals for real!' do
-      ary = []
-
       subject.trap('USR1') do
-        ary << :usr1
+        @buffer << :usr1
       end
 
       expect {
-        Process.kill('USR1', pid)
-        Process.kill('USR1', pid)
+        send_usr1!
+        send_usr1!
         wait_signals!
-      }.to change(ary, :length).by(2)
+      }.to change(@buffer, :length).by(2)
     end
 
     it 'registers a handler method' do
       subject.trap('USR1') { }
-      expect(subject.handlers.singleton_class.method_defined?('handle_USR1')).to be_truthy
+      expect(handlers).to have_key('USR1')
+      expect(handlers['USR1']).to be_kind_of(Proc)
     end
 
     describe 'trapping by signal number' do
       it 'works well too' do
-        ary = []
-
         subject.trap(10) do
-          ary << :usr1
+          @buffer << :usr1
         end
 
         expect {
-          Process.kill('USR1', pid)
-          Process.kill('USR1', pid)
+          send_usr1!
+          send_usr1!
           wait_signals!
-        }.to change(ary, :length).by(2)
+        }.to change(@buffer, :length).by(2)
       end
 
       it 'registers a handler method' do
         subject.trap(10) { }
-        expect(subject.handlers.singleton_class.method_defined?('handle_USR1')).to be_truthy
+        expect(handlers).to have_key('USR1')
+        expect(handlers['USR1']).to be_kind_of(Proc)
       end
     end
 
     describe 'with one argument block' do
       it 'passes signal name as a first argument' do
-        ary = []
         subject.trap('USR1') do |signal|
-          ary << signal
+          @buffer << signal
         end
 
-        Process.kill('USR1', pid)
-        Process.kill('USR1', pid)
+        send_usr1!
+        send_usr1!
         wait_signals!
 
-        expect(ary).to eq(['USR1', 'USR1'])
+        expect(@buffer).to eq(['USR1', 'USR1'])
       end
 
       describe 'trapping by signal number' do
         it 'passes string signal name as a first argument' do
-          ary = []
           subject.trap(10) do |signal|
-            ary << signal
+            @buffer << signal
           end
 
-          Process.kill('USR1', pid)
-          Process.kill('USR1', pid)
+          send_usr1!
+          send_usr1!
           wait_signals!
 
-          expect(ary).to eq(['USR1', 'USR1'])
+          expect(@buffer).to eq(['USR1', 'USR1'])
         end
       end
     end
 
     describe 'with two arguments block' do
       it 'passes signal name as a first argument and previous handler as a second' do
-        ary = []
-
         subject.trap('USR1') do |signal, prev|
-          ary << signal
-          ary << prev
+          @buffer << signal
+          @buffer << prev
         end
 
-        Process.kill('USR1', pid)
-        Process.kill('USR1', pid)
+        send_usr1!
+        send_usr1!
         wait_signals!
 
-        expect(ary).to eq(['USR1', 'DEFAULT', 'USR1', 'DEFAULT'])
+        expect(@buffer).to eq(['USR1', 'DEFAULT', 'USR1', 'DEFAULT'])
       end
 
       describe 'with previously defined handler' do
@@ -131,14 +134,13 @@ describe TrickySignals do
         include_context 'previously defined USR1'
 
         it 'is able to call it' do
-          ary = @buffer
           subject.trap('USR1') do |signal, prev|
-            ary << signal
+            @buffer << signal
             prev.call
           end
 
-          Process.kill('USR1', pid)
-          Process.kill('USR1', pid)
+          send_usr1!
+          send_usr1!
           wait_signals!
 
           expect(@buffer).to eq(['USR1', :hello, 'USR1', :hello])
@@ -150,17 +152,17 @@ describe TrickySignals do
   shared_examples '#untrap behavior' do
     it 'unregisters handler method' do
       subject.trap('USR1') { }
-      expect(subject.handlers.singleton_class.method_defined?('handle_USR1')).to be_truthy
+      expect(handlers).to have_key('USR1')
       subject.untrap('USR1')
-      expect(subject.handlers.singleton_class.method_defined?('handle_USR1')).to be_falsey
+      expect(handlers).not_to have_key('USR1')
     end
 
     describe 'when accessing by number' do
       it 'unregisters handler method' do
         subject.trap(10) { }
-        expect(subject.handlers.singleton_class.method_defined?('handle_USR1')).to be_truthy
+        expect(handlers).to have_key('USR1')
         subject.untrap(10)
-        expect(subject.handlers.singleton_class.method_defined?('handle_USR1')).to be_falsey
+        expect(handlers).not_to have_key('USR1')
       end
     end
 
@@ -174,27 +176,47 @@ describe TrickySignals do
       include_context 'previously defined USR1'
 
       it 'restores to it' do
-        ary = @buffer
-
-        Process.kill('USR1', pid)
-        Process.kill('USR1', pid)
+        send_usr1!
+        send_usr1!
         wait_signals!
 
         subject.trap('USR1') do
-          ary << :ehlo
+          @buffer << :ehlo
         end
 
-        Process.kill('USR1', pid)
-        Process.kill('USR1', pid)
+        send_usr1!
+        send_usr1!
         wait_signals!
 
         subject.untrap('USR1')
 
-        Process.kill('USR1', pid)
-        Process.kill('USR1', pid)
+        send_usr1!
+        send_usr1!
         wait_signals!
 
         expect(@buffer).to eq([:hello, :hello, :ehlo, :ehlo, :hello, :hello])
+      end
+
+      describe 'race condition with stale signals in queue' do
+        it 'does not happen' do
+          subject.trap('USR1') do
+            @buffer << :ehlo
+            if @buffer.length == 10
+              subject.untrap('USR1')
+            end
+          end
+
+          thread = Thread.new do
+            100.times do
+              send_usr1!
+            end
+            wait_signals!
+          end
+
+          thread.join
+
+          expect(@buffer[0...10]).to eq([:ehlo]*10)
+        end
       end
     end
   end
